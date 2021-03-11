@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009"
+					   xmlns:s="library://ns.adobe.com/flex/spark"
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   width="640" height="360">
+	<fx:Script>
+		<![CDATA[
+			import dto.ConfigureDTO;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Text;
+			import mx.rpc.Fault;
+			import mx.rpc.events.FaultEvent;
+			import mx.rpc.events.ResultEvent;
+			import mx.rpc.http.HTTPService;
+			
+			public static var SEPARATOR:String = " ";
+			
+			public static var DEFAULT_PROTOCOL:String = "TLSv1.2";
+		
+			public static var DEFAULT_CIPHER_SUITE:String = "TLS_RSA_WITH_AES_128_CBC_SHA";
+			
+			public static var RECOMMANDED_PROTOCOLS:Array = [
+				"TLSv1.2",
+				"TLSv1.3"
+			];
+			
+			public static var RECOMMANDED_CIPHER_SUITES:Array = [
+				"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+				"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+				"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+				"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+				"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+				"TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+				"TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
+			];
+			
+			[Bindable]
+			public var cipherSuites:ArrayCollection = new ArrayCollection();
+			
+			[Bindable]
+			public var protocols:ArrayCollection = new ArrayCollection();
+			
+			public function setCipherSuites(newCipherSuites:Array):void
+			{
+				cipherSuites.removeAll();
+				
+				if (newCipherSuites != null)
+				{
+					for each (var str: String in newCipherSuites) 
+					{
+						cipherSuites.addItem(new TestValue(str));
+					}
+				}
+			}
+			
+			public function setProtocols(newProtocols:Array):void
+			{
+				protocols.removeAll();
+				
+				if (newProtocols != null)
+				{
+					for each (var str: String in newProtocols)
+					{
+						protocols.addItem(new TestValue(str));
+					}
+				}
+			}
+			
+			protected function loadParams(event:MouseEvent):void
+			{
+				var url:String = "http://" + hostInput.text + "/params";
+				
+				function result(event:ResultEvent):void 
+				{
+					resultArea.text = "" +
+						"url          : " + url + "\n" + 
+						"result       : ok"     + "\n";
+					
+					var resultJson:String = String(event.result);
+					var result:Object = JSON.parse(resultJson) as Object;
+
+					setCipherSuites(result == null ? null : result.cipherSuites as Array);
+					setProtocols(result == null ? null : result.protocols as Array);
+					
+					currentState = 'test'
+				}
+				
+				function fault(event:FaultEvent):void
+				{
+					resultArea.text = faultEventToStr(event, url);
+				}
+				
+				var httpService:HTTPService = new HTTPService();
+				httpService.resultFormat = "text";
+				httpService.showBusyCursor = true;
+				httpService.url = url;
+				httpService.addEventListener(ResultEvent.RESULT, result);
+				httpService.addEventListener(FaultEvent.FAULT, fault);
+				httpService.send();
+			}
+			
+			protected function testClickHandler(event:MouseEvent):void
+			{
+				TestValue.resetResults(protocols);
+				TestValue.resetResults(cipherSuites);
+				
+				function protocolToHttpsParams(testValue:TestValue): ConfigureDTO
+				{
+					var protocolDTO:ConfigureDTO = new ConfigureDTO();
+					protocolDTO.cipherSuites = [DEFAULT_CIPHER_SUITE];
+					protocolDTO.protocols = [testValue.value];
+					return protocolDTO;
+				}
+				
+				function cipherSuiteToHttpsParams(testValue:TestValue): ConfigureDTO
+				{
+					var cipherDTO:ConfigureDTO = new ConfigureDTO();
+					cipherDTO.cipherSuites = [testValue.value];
+					cipherDTO.protocols = [DEFAULT_PROTOCOL];
+					return cipherDTO;
+				}
+				
+				function thenTestProtocols(): void
+				{
+					testValues(protocols, protocolToHttpsParams, null);
+				}
+				
+				testValues(cipherSuites, cipherSuiteToHttpsParams, thenTestProtocols);
+			}
+			
+			protected function testValues(testValues:ArrayCollection, toHttpsParams:Function, then:Function):void
+			{
+				resultArea.text = "";
+				testValuesAt(testValues, 0, toHttpsParams, then);
+			}
+			
+			protected function testValuesAt(testValues:ArrayCollection, index:int, toDTO:Function, then:Function):void
+			{
+				if (testValues == null || index >= testValues.length) 
+				{
+					if (then != null) 
+					{
+						then();
+					}
+					
+					return;
+				}
+				
+				var testValue:TestValue = testValues[index];
+				var testUrl:String = "https://" + hostInput.text + "/test";
+				
+				var confDTO:ConfigureDTO = toDTO(testValue);
+				var confUrl:String = "http://" + hostInput.text + "/configure";
+				
+				function testNextValues():void
+				{
+					testValuesAt(testValues, index + 1, toDTO, then);
+				}
+				
+				function testResult(event:ResultEvent):void 
+				{
+					testValue.result = "OK";
+					testNextValues();
+				}
+				
+				function testFault(event:FaultEvent):void 
+				{
+					testValue.result = "NOT SUPPORTED";
+					testValue.error = faultEventToStr(event, testUrl);
+					testNextValues();
+				}
+				
+				function confResult(event:ResultEvent):void 
+				{
+					var testService:HTTPService = new HTTPService();
+					testService.resultFormat = "text";
+					testService.showBusyCursor = true;
+					testService.url = testUrl;
+					testService.addEventListener(ResultEvent.RESULT, testResult);
+					testService.addEventListener(FaultEvent.FAULT, testFault);
+					testService.send();
+				}
+				
+				function confFault(event:FaultEvent):void
+				{
+					resultArea.text = resultArea.text + faultEventToStr(event, confUrl);
+				}
+				
+				var confService:HTTPService = new HTTPService();
+				confService.resultFormat = "text";
+				confService.contentType = "application/json";
+				confService.method = "POST";
+				confService.showBusyCursor = true;
+				confService.url = confUrl;
+				confService.addEventListener(ResultEvent.RESULT, confResult);
+				confService.addEventListener(FaultEvent.FAULT, confFault);
+				confService.send(JSON.stringify(confDTO));
+			}
+			
+			protected function faultEventToStr(event:FaultEvent, url:String):String 
+			{
+				var fault:Fault = event.fault;
+				
+				var error:String = "" +
+					"url          : " + url + "\n" +
+					"result       : error" + "\n" +
+					"status code  : " + event.statusCode  + "\n" +
+					"fault        : " + fault.faultString + "\n" +
+					"fault code   : " + fault.faultCode   + "\n" +
+					"fault detail : " + fault.faultDetail + "\n";
+				
+				var rootCause:IOErrorEvent = fault.rootCause as IOErrorEvent;
+				if (rootCause != null) 
+				{
+					error = error + 
+						"error id     : " + rootCause.errorID + "\n" +
+						"error text   : " + rootCause.text    + "\n";
+				}
+				
+				return error;
+			}
+			
+			protected function reportClickHandler(event:MouseEvent):void
+			{
+				var result:String = "Protocols: \n";
+				var maxLength:int = TestValue.maxValueLength(protocols) + 1;
+				
+				for each (var protocol:TestValue in protocols) 
+				{
+					var recommandedPrt:Boolean = RECOMMANDED_PROTOCOLS.indexOf(protocol.value) != -1;
+					result	+= protocol.printReport(maxLength, SEPARATOR, recommandedPrt) + "\n";
+				}
+				
+				result += SEPARATOR + "\nCipher Suites: \n";
+				maxLength = TestValue.maxValueLength(cipherSuites);
+				
+				for each (var cipherSuite:TestValue in cipherSuites) 
+				{
+					var recommandedCS:Boolean = RECOMMANDED_CIPHER_SUITES.indexOf(cipherSuite.value) != -1;
+					result += cipherSuite.printReport(maxLength, SEPARATOR, recommandedCS) + "\n";
+				}
+
+				
+				resultArea.text = result;
+			}
+		]]>
+	</fx:Script>
+	
+	<s:states>
+		<s:State name="param" />
+		<s:State name="test" />
+	</s:states>
+	
+	<mx:VBox width="100%" height="100%" verticalGap="10"
+			 paddingLeft="5" paddingTop="5" paddingRight="5" paddingBottom="5">
+		
+		<mx:HDividedBox width="100%" height="100%">
+			<mx:VBox width="100%" height="100%">
+				<mx:HBox width="100%" verticalAlign="middle" horizontalGap="5">
+					<mx:Label text="Host : "/>
+					<mx:TextInput id="hostInput" width="100%" text="localhost"/>
+				</mx:HBox>
+				
+				<mx:HBox width="100%" height="100%" 
+						 verticalAlign="middle" horizontalAlign="center"
+						 includeIn="param">
+					<mx:Button label="Load params"
+							   paddingTop="10" paddingRight="10" paddingBottom="10" paddingLeft="10"
+							   click="loadParams(event)"/>
+				</mx:HBox>
+				
+				<mx:VBox width="100%" height="100%"
+						 includeIn="test">
+					<mx:HBox>
+						<mx:Button label="Test" click="testClickHandler(event)" />
+						<mx:Button label="Report" click="reportClickHandler(event)" />
+					</mx:HBox>
+					
+					<mx:VDividedBox width="100%" height="100%"> 
+						<mx:DataGrid dataProvider="{cipherSuites}"
+									 width="100%" height="100%">
+							<mx:columns>
+								<mx:DataGridColumn dataField="value" headerText="Cipher suite"  />
+								<mx:DataGridColumn dataField="result" headerText="Result" />
+							</mx:columns>
+						</mx:DataGrid>
+						
+						<mx:DataGrid dataProvider="{protocols}"
+									 width="100%" height="100%">
+							<mx:columns>
+								<mx:DataGridColumn dataField="value" headerText="Protocol" />
+								<mx:DataGridColumn dataField="result" headerText="Result" />
+							</mx:columns>
+						</mx:DataGrid>
+					</mx:VDividedBox>
+				</mx:VBox>
+			</mx:VBox>
+
+			<mx:VBox width="100%" height="100%">
+				<mx:TextArea id="resultArea" width="100%" height="100%" fontFamily="Courier New,Courier,Arial" fontSize="12"/>
+			</mx:VBox>
+		</mx:HDividedBox>
+	</mx:VBox>
+</s:WindowedApplication>

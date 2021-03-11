@@ -1,0 +1,6 @@
+# FlashBuilder
+.settings/
+bin-debug/
+.actionScriptProperties
+.flexProperties
+.project
